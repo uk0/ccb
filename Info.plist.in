@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleName</key>
+    <string>Claude Code Balance</string>
+    <key>CFBundleDisplayName</key>
+    <string>Claude Code Balance</string>
+    <key>CFBundleIdentifier</key>
+    <string>me.firsh.ccb</string>
+    <key>CFBundleExecutable</key>
+    <string>ccb</string>
+    <key>CFBundleVersion</key>
+    <string>@PROJECT_VERSION@</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@PROJECT_VERSION@</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright (c) 2024 uk0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- Network access description -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+
+    <!-- Describe why the app needs network access -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Claude Code Balance needs network access to forward API requests.</string>
+</dict>
+</plist>

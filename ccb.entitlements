@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Allow incoming network connections (for proxy server) -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+    <!-- Allow outgoing network connections (for API requests) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- Disable App Sandbox to avoid permission dialogs -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+</dict>
+</plist>
