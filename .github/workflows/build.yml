@@ -114,36 +114,58 @@ jobs:
           arch: win64_mingw
           tools: 'tools_mingw1310'
           cache: true
+          set-env: true
 
-      - name: Setup MinGW
-        shell: bash
+      - name: Setup Build Environment
+        shell: powershell
         run: |
-          # Find MinGW path from Qt Tools
-          MINGW_PATH=$(find "$RUNNER_TOOL_CACHE" -type d -name "mingw*" -path "*Tools*" 2>/dev/null | head -1)
-          if [ -z "$MINGW_PATH" ]; then
-            MINGW_PATH="$IQTA_TOOLS/mingw1310_64"
-          fi
-          echo "MINGW_PATH=$MINGW_PATH" >> $GITHUB_ENV
-          echo "MinGW found at: $MINGW_PATH"
+          # Debug: Print all Qt-related environment variables
+          Write-Host "=== Environment Variables ==="
+          Get-ChildItem env: | Where-Object { $_.Name -match "QT|IQTA" } | ForEach-Object {
+            Write-Host "$($_.Name) = $($_.Value)"
+          }
+
+          # Find Qt path
+          $qtDir = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR }
+                   elseif ($env:Qt6_DIR) { $env:Qt6_DIR }
+                   else { Join-Path $env:RUNNER_WORKSPACE "Qt/${{ env.QT_VERSION }}/mingw_64" }
+
+          # Find MinGW path
+          $mingwPath = if ($env:IQTA_TOOLS) { Join-Path $env:IQTA_TOOLS "mingw1310_64" }
+                       else { Join-Path $env:RUNNER_WORKSPACE "Qt/Tools/mingw1310_64" }
+
+          # Verify paths exist
+          if (-not (Test-Path $qtDir)) {
+            # Try alternate location
+            $altQtDir = Join-Path $env:RUNNER_WORKSPACE "Qt/${{ env.QT_VERSION }}/mingw_64"
+            if (Test-Path $altQtDir) { $qtDir = $altQtDir }
+          }
+
+          Write-Host "Qt Dir: $qtDir"
+          Write-Host "MinGW Path: $mingwPath"
+
+          # Export to GITHUB_ENV for subsequent steps
+          Add-Content $env:GITHUB_ENV "QT_DIR=$qtDir"
+          Add-Content $env:GITHUB_ENV "MINGW_PATH=$mingwPath"
 
       - name: Configure CMake
-        shell: bash
+        shell: cmd
         run: |
-          mkdir -p build
+          mkdir build
           cd build
-          cmake -G "MinGW Makefiles" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$Qt6_DIR" \
-            -DCMAKE_C_COMPILER="$MINGW_PATH/bin/gcc.exe" \
-            -DCMAKE_CXX_COMPILER="$MINGW_PATH/bin/g++.exe" \
-            -DCMAKE_MAKE_PROGRAM="$MINGW_PATH/bin/mingw32-make.exe" \
+          cmake -G "MinGW Makefiles" ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_PREFIX_PATH="%QT_DIR%" ^
+            -DCMAKE_C_COMPILER="%MINGW_PATH%\bin\gcc.exe" ^
+            -DCMAKE_CXX_COMPILER="%MINGW_PATH%\bin\g++.exe" ^
+            -DCMAKE_MAKE_PROGRAM="%MINGW_PATH%\bin\mingw32-make.exe" ^
             ..
 
       - name: Build
-        shell: bash
+        shell: cmd
         run: |
           cd build
-          "$MINGW_PATH/bin/mingw32-make.exe" -j$NUMBER_OF_PROCESSORS
+          "%MINGW_PATH%\bin\mingw32-make.exe" -j%NUMBER_OF_PROCESSORS%
 
       - name: Deploy Qt Frameworks
         shell: powershell
@@ -155,11 +177,12 @@ jobs:
           Copy-Item "build/ccb.exe" -Destination $deployDir
 
           # Run windeployqt
-          $windeployqt = Join-Path $env:Qt6_DIR "bin/windeployqt.exe"
+          $windeployqt = Join-Path $env:QT_DIR "bin/windeployqt.exe"
+          Write-Host "Using windeployqt: $windeployqt"
           & $windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw --compiler-runtime "$deployDir/ccb.exe"
 
           # Copy MinGW runtime DLLs
-          $mingwBin = "$env:MINGW_PATH/bin"
+          $mingwBin = Join-Path $env:MINGW_PATH "bin"
           @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll") | ForEach-Object {
             $dllPath = Join-Path $mingwBin $_
             if (Test-Path $dllPath) {
