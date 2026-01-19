@@ -1,0 +1,277 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  QT_VERSION: '6.6.2'
+  PROJECT_NAME: 'ccb'
+  APP_VERSION: '1.0'
+
+jobs:
+  build-macos:
+    runs-on: macos-14  # Apple Silicon runner (M1)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Qt (macOS Universal)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          cache: true
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$Qt6_DIR" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="13.0" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: |
+          cd build
+          cmake --build . --parallel $(sysctl -n hw.ncpu)
+
+      - name: Deploy Qt Frameworks
+        run: |
+          cd build
+          cmake --build . --target deploy
+
+      - name: Create DMG
+        run: |
+          cd build
+          cmake --build . --target dmg
+
+      - name: Verify Build
+        run: |
+          APP_PATH="build/ccb.app"
+          BINARY_PATH="$APP_PATH/Contents/MacOS/ccb"
+
+          echo "=== Build Verification ==="
+
+          # Check app bundle exists
+          if [ -d "$APP_PATH" ]; then
+            echo "✓ App bundle exists"
+            du -sh "$APP_PATH"
+          else
+            echo "✗ App bundle not found"
+            exit 1
+          fi
+
+          # Check architectures (Universal Binary)
+          echo "Architectures:"
+          lipo -info "$BINARY_PATH" || true
+
+          # Check minimum macOS version
+          echo "Minimum macOS version:"
+          otool -l "$BINARY_PATH" | grep -A 3 "LC_BUILD_VERSION" | grep "minos" | head -1 || true
+
+          # Check DMG exists
+          if [ -f "build/ccb-${{ env.APP_VERSION }}-universal.dmg" ]; then
+            echo "✓ DMG created"
+            ls -lh "build/ccb-${{ env.APP_VERSION }}-universal.dmg"
+          else
+            echo "✗ DMG not found"
+            exit 1
+          fi
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ccb-macos-universal
+          path: build/ccb-${{ env.APP_VERSION }}-universal.dmg
+          retention-days: 7
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Qt (Windows MinGW)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_mingw
+          tools: 'tools_mingw1310'
+          cache: true
+
+      - name: Setup MinGW
+        shell: bash
+        run: |
+          # Find MinGW path from Qt Tools
+          MINGW_PATH=$(find "$RUNNER_TOOL_CACHE" -type d -name "mingw*" -path "*Tools*" 2>/dev/null | head -1)
+          if [ -z "$MINGW_PATH" ]; then
+            MINGW_PATH="$IQTA_TOOLS/mingw1310_64"
+          fi
+          echo "MINGW_PATH=$MINGW_PATH" >> $GITHUB_ENV
+          echo "MinGW found at: $MINGW_PATH"
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          mkdir -p build
+          cd build
+          cmake -G "MinGW Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$Qt6_DIR" \
+            -DCMAKE_C_COMPILER="$MINGW_PATH/bin/gcc.exe" \
+            -DCMAKE_CXX_COMPILER="$MINGW_PATH/bin/g++.exe" \
+            -DCMAKE_MAKE_PROGRAM="$MINGW_PATH/bin/mingw32-make.exe" \
+            ..
+
+      - name: Build
+        shell: bash
+        run: |
+          cd build
+          "$MINGW_PATH/bin/mingw32-make.exe" -j$NUMBER_OF_PROCESSORS
+
+      - name: Deploy Qt Frameworks
+        shell: powershell
+        run: |
+          $deployDir = "build/deploy"
+          New-Item -ItemType Directory -Force -Path $deployDir
+
+          # Copy executable
+          Copy-Item "build/ccb.exe" -Destination $deployDir
+
+          # Run windeployqt
+          $windeployqt = Join-Path $env:Qt6_DIR "bin/windeployqt.exe"
+          & $windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw --compiler-runtime "$deployDir/ccb.exe"
+
+          # Copy MinGW runtime DLLs
+          $mingwBin = "$env:MINGW_PATH/bin"
+          @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll") | ForEach-Object {
+            $dllPath = Join-Path $mingwBin $_
+            if (Test-Path $dllPath) {
+              Copy-Item $dllPath -Destination $deployDir
+              Write-Host "Copied: $_"
+            }
+          }
+
+          Write-Host "Deploy directory contents:"
+          Get-ChildItem -Path $deployDir -Recurse | Select-Object FullName
+
+      - name: Create ZIP Package
+        shell: powershell
+        run: |
+          $zipName = "ccb-${{ env.APP_VERSION }}-windows-x64.zip"
+
+          cd build/deploy
+          Compress-Archive -Path "*" -DestinationPath "../$zipName" -Force
+
+          cd ..
+          Write-Host "ZIP package created:"
+          Get-ChildItem $zipName
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ccb-windows-x64
+          path: build/ccb-${{ env.APP_VERSION }}-windows-x64.zip
+          retention-days: 7
+
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ccb-macos-universal
+          path: artifacts/
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ccb-windows-x64
+          path: artifacts/
+
+      - name: Get Version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: List Artifacts
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          ls -la artifacts/
+
+      - name: Create Release on ClaudeCodeBalance
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ github.repository_owner }}/ClaudeCodeBalance
+          tag_name: ${{ steps.get_version.outputs.version }}
+          name: Claude Code Balance ${{ steps.get_version.outputs.version }}
+          body: |
+            ## Claude Code Balance ${{ steps.get_version.outputs.version }}
+
+            Qt6 透明代理应用，用于 Claude Code API 请求转发，支持多 URL/Key 自动切换、错误重试和负载均衡。
+
+            ### 下载说明
+
+            | 平台 | 文件 | 说明 |
+            |------|------|------|
+            | macOS | `ccb-${{ env.APP_VERSION }}-universal.dmg` | Universal Binary (Intel + Apple Silicon) |
+            | Windows | `ccb-${{ env.APP_VERSION }}-windows-x64.zip` | Windows 10/11 64位 |
+
+            ### macOS 安装
+
+            1. 下载 DMG 文件
+            2. 打开 DMG，将应用拖入 Applications 文件夹
+            3. 首次运行需要在系统设置中允许打开
+
+            **系统要求**: macOS 13.0+ (Ventura, Sonoma, Sequoia)
+
+            ### Windows 安装
+
+            1. 下载 ZIP 文件
+            2. 解压到任意目录
+            3. 运行 `ccb.exe`
+
+            **系统要求**: Windows 10/11 64位
+
+            ### 功能特性
+
+            - 多 API URL 支持，自动故障转移
+            - 多 API Key 支持，自动轮换
+            - 可配置超时时间 (30-600秒)
+            - 空响应纠错 (Correction) 功能
+            - 请求失败自动重试
+            - 后端冷却机制
+
+            ---
+            Built with Qt ${{ env.QT_VERSION }}
+          files: |
+            artifacts/ccb-${{ env.APP_VERSION }}-universal.dmg
+            artifacts/ccb-${{ env.APP_VERSION }}-windows-x64.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
