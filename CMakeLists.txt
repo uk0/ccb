@@ -5,8 +5,10 @@ if(APPLE)
     # Minimum macOS version - Qt 6.10.1 requires macOS 13.0+
     set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS version" FORCE)
 
-    # Build Universal Binary (Intel + Apple Silicon)
-    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architectures" FORCE)
+    # Build Universal Binary (Intel + Apple Silicon) - only if not overridden
+    if(NOT DEFINED CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "")
+        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architectures" FORCE)
+    endif()
 endif()
 
 project(ccb VERSION 1.0 LANGUAGES CXX)
@@ -20,6 +22,46 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
+
+# Find zstd library for response decompression
+# Note: zstd is disabled for Universal Binary builds because it's hard to get
+# a Universal version of the library. For Universal builds, the proxy will
+# request uncompressed responses instead.
+set(ZSTD_FOUND FALSE)
+
+# Check if building Universal Binary
+list(LENGTH CMAKE_OSX_ARCHITECTURES ARCH_COUNT)
+if(APPLE AND ARCH_COUNT GREATER 1)
+    message(STATUS "Building Universal Binary - zstd disabled (use Accept-Encoding header instead)")
+else()
+    # Try to find zstd manually - prefer Homebrew paths first for Apple Silicon
+    find_path(ZSTD_INCLUDE_DIR zstd.h
+        HINTS /opt/homebrew/include /usr/local/include /usr/include
+        NO_DEFAULT_PATH
+    )
+    if(NOT ZSTD_INCLUDE_DIR)
+        find_path(ZSTD_INCLUDE_DIR zstd.h)
+    endif()
+
+    find_library(ZSTD_LIBRARY
+        NAMES zstd libzstd
+        HINTS /opt/homebrew/lib /usr/local/lib /usr/lib
+        NO_DEFAULT_PATH
+    )
+    if(NOT ZSTD_LIBRARY)
+        find_library(ZSTD_LIBRARY NAMES zstd libzstd)
+    endif()
+
+    if(ZSTD_INCLUDE_DIR AND ZSTD_LIBRARY)
+        set(ZSTD_FOUND TRUE)
+        set(ZSTD_INCLUDE_DIRS ${ZSTD_INCLUDE_DIR})
+        set(ZSTD_LIBRARIES ${ZSTD_LIBRARY})
+        message(STATUS "Found zstd: ${ZSTD_LIBRARIES}")
+        add_definitions(-DHAVE_ZSTD)
+    else()
+        message(STATUS "zstd not found - zstd decompression will be disabled")
+    endif()
+endif()
 
 set(PROJECT_SOURCES
         main.cpp
@@ -78,6 +120,12 @@ else()
 endif()
 
 target_link_libraries(ccb PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network)
+
+# Link zstd library if found
+if(ZSTD_FOUND)
+    target_include_directories(ccb PRIVATE ${ZSTD_INCLUDE_DIRS})
+    target_link_libraries(ccb PRIVATE ${ZSTD_LIBRARIES})
+endif()
 
 # Platform-specific libraries for hardware identification
 if(APPLE)

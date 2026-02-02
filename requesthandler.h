@@ -68,6 +68,8 @@ private:
         bool useOpenAIFormat = false;    // Whether OpenAI format conversion is enabled
         bool isTokenCountRequest = false; // Whether this is a token count request
         Conversion::StreamingState streamState;  // Per-request streaming state
+        bool needsZstdDecompression = false;  // Whether response needs zstd decompression
+        QByteArray zstdBuffer;  // Buffer for accumulating zstd compressed data
     };
 
     void sendRequest(PendingRequest &pending);
@@ -79,10 +81,13 @@ private:
     bool isNullResponse(const QByteArray &body);  // Detect null response
     void sendErrorResponse(QTcpSocket *socket, int statusCode, const QString &message);
     void sendResponseHeaders(QTcpSocket *socket, QNetworkReply *reply);
+    void sendResponseHeadersWithoutEncoding(QTcpSocket *socket, QNetworkReply *reply);  // For decompressed responses
     bool isSocketValid(const QPointer<QTcpSocket> &socket);  // Acquires lock - use when NOT holding m_mutex
     bool isSocketValidLocked(const QPointer<QTcpSocket> &socket);  // No lock - use when ALREADY holding m_mutex
     QByteArray replaceModelInRequest(const QByteArray &body, QString &originalModel, QString &mappedModel);
     QByteArray replaceModelInResponse(const QByteArray &body, const QString &mappedModel, const QString &originalModel);
+    QByteArray decompressZstd(const QByteArray &compressed);  // Decompress zstd data
+    bool isZstdCompressed(QNetworkReply *reply);  // Check if response is zstd compressed
 
     BackendPool *m_pool;
     ConfigManager *m_config;

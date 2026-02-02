@@ -118,6 +118,12 @@ private:
      * Uses ~3.7 chars per token (average between code and English).
      */
     static int estimateTextTokens(const QString &text);
+
+    /**
+     * Sanitize JSON Schema for broader API compatibility.
+     * Converts unsupported keywords like 'const' to 'enum'.
+     */
+    static QJsonValue sanitizeJsonSchema(const QJsonValue &schema);
 };
 
 } // namespace Conversion

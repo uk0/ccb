@@ -12,6 +12,10 @@
 #include <QMutexLocker>
 #include <QSslConfiguration>
 
+#ifdef HAVE_ZSTD
+#include <zstd.h>
+#endif
+
 RequestHandler::RequestHandler(BackendPool *pool, ConfigManager *config, QObject *parent)
     : QObject(parent)
     , m_pool(pool)
@@ -283,6 +287,10 @@ void RequestHandler::sendRequest(PendingRequest &pending)
     netRequest.setRawHeader("Authorization", QString("Bearer %1").arg(backend.key).toUtf8());
     netRequest.setRawHeader("x-api-key", backend.key.toUtf8());
 
+    // Disable ALL compression - request uncompressed responses only
+    // This avoids issues with zstd (not supported) and gzip (Qt auto-decompression issues)
+    netRequest.setRawHeader("Accept-Encoding", "identity");
+
     // Ensure Content-Type is set for POST/PUT requests
     if ((pending.originalRequest.method == "POST" || pending.originalRequest.method == "PUT") &&
         !pending.originalRequest.body.isEmpty()) {
@@ -414,6 +422,22 @@ void RequestHandler::onReplyReadyRead()
         LOG("RequestHandler: Socket invalid in onReplyReadyRead, marking cancelled");
         pending.cancelled = true;
         return;
+    }
+
+    // Check for zstd compression on first data chunk
+    if (!pending.headersSent && !pending.needsZstdDecompression) {
+        pending.needsZstdDecompression = isZstdCompressed(reply);
+        if (pending.needsZstdDecompression) {
+            LOG("RequestHandler: Response is zstd compressed, will buffer and decompress");
+        }
+    }
+
+    // If zstd compressed, buffer all data and wait for onReplyFinished to decompress
+    if (pending.needsZstdDecompression) {
+        pending.zstdBuffer.append(data);
+        pending.accumulatedResponse.append(data);  // Also accumulate for error detection
+        LOG(QString("RequestHandler: Buffering zstd data, total buffered: %1 bytes").arg(pending.zstdBuffer.size()));
+        return;  // Don't process until we have all data
     }
 
     QTcpSocket *socket = pending.clientSocket.data();
@@ -562,6 +586,32 @@ void RequestHandler::onReplyFinished()
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     QByteArray remainingBody = reply->readAll();
     pending.accumulatedResponse.append(remainingBody);
+
+    // Handle zstd decompression if needed
+    if (pending.needsZstdDecompression) {
+        pending.zstdBuffer.append(remainingBody);
+        LOG(QString("RequestHandler: Decompressing zstd data, compressed size: %1 bytes").arg(pending.zstdBuffer.size()));
+        QByteArray decompressed = decompressZstd(pending.zstdBuffer);
+        if (!decompressed.isEmpty()) {
+            pending.accumulatedResponse = decompressed;
+            LOG(QString("RequestHandler: zstd decompression successful, decompressed size: %1 bytes").arg(decompressed.size()));
+        } else {
+            // zstd decompression failed - this is an error condition
+            LOG("RequestHandler: zstd decompression failed");
+#ifndef HAVE_ZSTD
+            // zstd not compiled in - return error to client
+            LOG("RequestHandler: zstd support not available, returning error");
+            if (isSocketValid(pending.clientSocket)) {
+                sendErrorResponse(pending.clientSocket.data(), 502,
+                    "Server returned zstd compressed response but zstd decompression is not available. "
+                    "Please rebuild with zstd support or use a different backend.");
+            }
+            reply->deleteLater();
+            emit requestError();
+            return;
+#endif
+        }
+    }
 
     bool hasNetworkError = reply->error() != QNetworkReply::NoError;
     QString errorString = reply->errorString();
@@ -735,11 +785,24 @@ void RequestHandler::onReplyFinished()
                 reply->deleteLater();
                 return;
             }
-            sendResponseHeaders(pending.clientSocket.data(), reply);
+            // For zstd responses, send modified headers (without content-encoding)
+            if (pending.needsZstdDecompression) {
+                sendResponseHeadersWithoutEncoding(pending.clientSocket.data(), reply);
+            } else {
+                sendResponseHeaders(pending.clientSocket.data(), reply);
+            }
         }
 
         // Apply reverse model mapping to remaining body (or OpenAI format conversion)
-        QByteArray bodyToSend = remainingBody;
+        QByteArray bodyToSend;
+
+        // For zstd decompressed responses, use the full decompressed data
+        if (pending.needsZstdDecompression) {
+            bodyToSend = pending.accumulatedResponse;
+        } else {
+            bodyToSend = remainingBody;
+        }
+
         if (pending.useOpenAIFormat && !pending.streamingStarted) {
             if (pending.isTokenCountRequest) {
                 // Token count response - use special converter
@@ -750,7 +813,7 @@ void RequestHandler::onReplyFinished()
                 bodyToSend = Conversion::ResponseConverter::convert(pending.accumulatedResponse, pending.originalModelName);
                 LOG("RequestHandler: Converted OpenAI response to Claude format");
             }
-        } else if (!pending.originalModelName.isEmpty() && !pending.mappedModelName.isEmpty()) {
+        } else if (!pending.originalModelName.isEmpty() && !pending.mappedModelName.isEmpty() && !pending.needsZstdDecompression) {
             bodyToSend = replaceModelInResponse(remainingBody, pending.mappedModelName, pending.originalModelName);
         }
 
@@ -860,14 +923,32 @@ bool RequestHandler::isNullResponse(const QByteArray &body)
     if (bodyStr.contains("\ndata: null\n")) return true;
     if (bodyStr.contains("\r\ndata: null\r\n")) return true;
 
-    // IMPORTANT: "content":null is NORMAL in OpenAI tool_calls responses
-    // Only flag it as null if there are NO tool_calls in the response
-    bool hasToolCalls = bodyStr.contains("tool_calls") || bodyStr.contains("tool_use");
+    // IMPORTANT: Many null fields are NORMAL in OpenAI responses:
+    // - "content":null in tool_calls responses
+    // - "type":null in streaming tool_calls delta (after first chunk)
+    // - "usage":null, "logprobs":null, "system_fingerprint":null, etc.
+    // Only flag as null if it's a truly empty/invalid response
 
-    if (!hasToolCalls) {
+    // Check if this looks like a valid OpenAI response (has choices or error)
+    bool hasChoices = bodyStr.contains("\"choices\"");
+    bool hasError = bodyStr.contains("\"error\"");
+    bool hasToolCalls = bodyStr.contains("tool_calls") || bodyStr.contains("tool_use");
+    bool hasDelta = bodyStr.contains("\"delta\"");
+    bool hasMessage = bodyStr.contains("\"message\"");
+
+    // If it has choices with tool_calls, delta, or message, it's likely valid
+    if (hasChoices && (hasToolCalls || hasDelta || hasMessage)) {
+        return false;
+    }
+
+    // If it has an error object, let it through (error handling elsewhere)
+    if (hasError) {
+        return false;
+    }
+
+    // For non-tool_calls responses without choices, check for problematic null patterns
+    if (!hasChoices && !hasToolCalls) {
         // Check for JSON with null content (common Claude API error)
-        // Pattern: "content":null or "value":null
-        // But only if there are no tool_calls (tool_calls normally have content:null)
         if (bodyStr.contains("\"content\":null") ||
             bodyStr.contains("\"content\": null") ||
             bodyStr.contains("\"value\":null") ||
@@ -876,11 +957,6 @@ bool RequestHandler::isNullResponse(const QByteArray &body)
             bodyStr.contains("\"text\": null")) {
             return true;
         }
-    }
-
-    // Check for message with null type
-    if (bodyStr.contains("\"type\":null") || bodyStr.contains("\"type\": null")) {
-        return true;
     }
 
     return false;
@@ -927,6 +1003,37 @@ void RequestHandler::sendResponseHeaders(QTcpSocket *socket, QNetworkReply *repl
     for (const QByteArray &header : headerList) {
         QString headerName = QString::fromUtf8(header).toLower();
         if (headerName == "transfer-encoding" || headerName == "connection") {
+            continue;
+        }
+        response += QString("%1: %2\r\n").arg(QString::fromUtf8(header), QString::fromUtf8(reply->rawHeader(header)));
+    }
+
+    response += "Connection: close\r\n";
+    response += "\r\n";
+
+    socket->write(response.toUtf8());
+}
+
+void RequestHandler::sendResponseHeadersWithoutEncoding(QTcpSocket *socket, QNetworkReply *reply)
+{
+    if (!socket || socket->state() != QAbstractSocket::ConnectedState) return;
+    if (!reply) return;
+
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QString statusText = reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();
+
+    if (statusText.isEmpty()) {
+        statusText = "OK";
+    }
+
+    QString response = QString("HTTP/1.1 %1 %2\r\n").arg(statusCode).arg(statusText);
+
+    QList<QByteArray> headerList = reply->rawHeaderList();
+    for (const QByteArray &header : headerList) {
+        QString headerName = QString::fromUtf8(header).toLower();
+        // Skip encoding-related headers since we've decompressed the content
+        if (headerName == "transfer-encoding" || headerName == "connection" ||
+            headerName == "content-encoding" || headerName == "content-length") {
             continue;
         }
         response += QString("%1: %2\r\n").arg(QString::fromUtf8(header), QString::fromUtf8(reply->rawHeader(header)));
@@ -1002,4 +1109,56 @@ QByteArray RequestHandler::replaceModelInResponse(const QByteArray &body, const 
     bodyStr.replace(searchPattern2, replacePattern2);
 
     return bodyStr.toUtf8();
+}
+
+bool RequestHandler::isZstdCompressed(QNetworkReply *reply)
+{
+    if (!reply) return false;
+    QString encoding = QString::fromUtf8(reply->rawHeader("Content-Encoding")).toLower();
+    return encoding.contains("zstd");
+}
+
+QByteArray RequestHandler::decompressZstd(const QByteArray &compressed)
+{
+#ifdef HAVE_ZSTD
+    if (compressed.isEmpty()) {
+        return compressed;
+    }
+
+    // Get decompressed size
+    unsigned long long decompressedSize = ZSTD_getFrameContentSize(compressed.constData(), compressed.size());
+
+    if (decompressedSize == ZSTD_CONTENTSIZE_ERROR) {
+        LOG("RequestHandler: zstd - not a valid zstd frame");
+        return QByteArray();
+    }
+
+    if (decompressedSize == ZSTD_CONTENTSIZE_UNKNOWN) {
+        // Size unknown, use streaming decompression with growing buffer
+        LOG("RequestHandler: zstd - content size unknown, using streaming decompression");
+        decompressedSize = compressed.size() * 10;  // Initial estimate
+    }
+
+    // Allocate output buffer
+    QByteArray decompressed;
+    decompressed.resize(static_cast<int>(decompressedSize));
+
+    // Decompress
+    size_t result = ZSTD_decompress(decompressed.data(), decompressed.size(),
+                                     compressed.constData(), compressed.size());
+
+    if (ZSTD_isError(result)) {
+        LOG(QString("RequestHandler: zstd decompression error: %1").arg(ZSTD_getErrorName(result)));
+        return QByteArray();
+    }
+
+    decompressed.resize(static_cast<int>(result));
+    LOG(QString("RequestHandler: zstd decompressed %1 bytes -> %2 bytes")
+            .arg(compressed.size()).arg(decompressed.size()));
+
+    return decompressed;
+#else
+    LOG("RequestHandler: zstd support not compiled in, cannot decompress");
+    return QByteArray();
+#endif
 }

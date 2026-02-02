@@ -583,7 +583,9 @@ QJsonArray RequestConverter::convertTools(const QJsonArray &claudeTools)
         function["description"] = claudeTool.value("description").toString();
 
         if (claudeTool.contains("input_schema")) {
-            function["parameters"] = claudeTool.value("input_schema").toObject();
+            // Sanitize the schema to remove unsupported keywords like 'const'
+            QJsonValue sanitized = sanitizeJsonSchema(claudeTool.value("input_schema"));
+            function["parameters"] = sanitized;
         }
 
         openAITool["function"] = function;
@@ -663,6 +665,70 @@ int RequestConverter::estimateTextTokens(const QString &text)
     if (text.isEmpty()) return 0;
     // Use 3.7 as average (between 3.5 for code and 4.0 for English)
     return qMax(1, static_cast<int>(text.length() / 3.7));
+}
+
+QJsonValue RequestConverter::sanitizeJsonSchema(const QJsonValue &schema)
+{
+    if (schema.isNull() || schema.isUndefined()) {
+        return schema;
+    }
+
+    if (schema.isArray()) {
+        QJsonArray result;
+        QJsonArray arr = schema.toArray();
+        for (const QJsonValue &item : arr) {
+            result.append(sanitizeJsonSchema(item));
+        }
+        return result;
+    }
+
+    if (!schema.isObject()) {
+        return schema;
+    }
+
+    QJsonObject obj = schema.toObject();
+    QJsonObject result;
+
+    for (auto it = obj.begin(); it != obj.end(); ++it) {
+        QString key = it.key();
+        QJsonValue value = it.value();
+
+        // Convert 'const' to 'enum' with single value
+        if (key == "const") {
+            QJsonArray enumArray;
+            enumArray.append(value);
+            result["enum"] = enumArray;
+            LOG(QString("RequestConverter: Converted 'const' to 'enum' for value: %1")
+                    .arg(value.isString() ? value.toString() : "non-string"));
+        }
+        // Handle 'properties', 'definitions', '$defs', 'patternProperties' - each value is a schema
+        else if (key == "properties" || key == "definitions" || key == "$defs" || key == "patternProperties") {
+            if (value.isObject()) {
+                QJsonObject props = value.toObject();
+                QJsonObject sanitizedProps;
+                for (auto propIt = props.begin(); propIt != props.end(); ++propIt) {
+                    sanitizedProps[propIt.key()] = sanitizeJsonSchema(propIt.value());
+                }
+                result[key] = sanitizedProps;
+            } else {
+                result[key] = value;
+            }
+        }
+        // These are schema values that need direct recursion
+        else if (key == "items" || key == "additionalProperties" ||
+                 key == "anyOf" || key == "oneOf" || key == "allOf" || key == "not" ||
+                 key == "if" || key == "then" || key == "else" ||
+                 key == "contains" || key == "propertyNames" ||
+                 key == "additionalItems" || key == "unevaluatedItems" || key == "unevaluatedProperties") {
+            result[key] = sanitizeJsonSchema(value);
+        }
+        // Keep other keys as-is (type, description, enum, format, default, etc.)
+        else {
+            result[key] = value;
+        }
+    }
+
+    return result;
 }
 
 } // namespace Conversion
