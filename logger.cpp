@@ -1,6 +1,7 @@
 #include "logger.h"
 #include <QMutexLocker>
 #include <QDir>
+#include <QStandardPaths>
 
 Logger& Logger::instance()
 {
@@ -10,7 +11,13 @@ Logger& Logger::instance()
 
 Logger::Logger()
 {
+#ifdef Q_OS_WIN
+    setLogFile(QDir::toNativeSeparators("C:/ccb.log"));
+#elif defined(Q_OS_LINUX)
+    setLogFile("/var/logs/ccb.log");
+#else
     setLogFile("/tmp/ccb.log");
+#endif
 }
 
 Logger::~Logger()

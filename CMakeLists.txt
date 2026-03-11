@@ -82,6 +82,8 @@ set(PROJECT_SOURCES
         licensemanager.cpp
         licensedialog.h
         licensedialog.cpp
+        conversationbrowser.h
+        conversationbrowser.cpp
         macosstylemanager.h
         macosstylemanager.cpp
         # Conversion module - Claude/OpenAI format conversion

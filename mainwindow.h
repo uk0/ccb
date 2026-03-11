@@ -14,6 +14,7 @@
 #include <QComboBox>
 
 class BackendPool;
+class ConversationBrowser;
 class ConfigManager;
 class ProxyServer;
 class LicenseManager;
@@ -57,6 +58,7 @@ private slots:
     void refreshCooldowns();
     void updateStatus();
     void showAbout();
+    void showConversations();
     void flushLogBuffer();
     void onStatsUpdated(const ProxyServer::Stats &stats);
     void onUrlItemClicked(QListWidgetItem *item);

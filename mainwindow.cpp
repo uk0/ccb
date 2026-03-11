@@ -7,6 +7,7 @@
 #include "licensemanager.h"
 #include "logger.h"
 #include "macosstylemanager.h"
+#include "conversationbrowser.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -1266,9 +1267,21 @@ void MainWindow::setupMenuBar()
 {
     QMenuBar *menuBar = this->menuBar();
 
+    QMenu *toolsMenu = menuBar->addMenu("Tools");
+    QAction *conversationsAction = toolsMenu->addAction("Conversations");
+    conversationsAction->setShortcut(QKeySequence("Ctrl+Shift+C"));
+    connect(conversationsAction, &QAction::triggered, this, &MainWindow::showConversations);
+
     QMenu *helpMenu = menuBar->addMenu("Help");
     QAction *aboutAction = helpMenu->addAction("About");
     connect(aboutAction, &QAction::triggered, this, &MainWindow::showAbout);
+}
+
+void MainWindow::showConversations()
+{
+    ConversationBrowser *browser = new ConversationBrowser(this);
+    browser->setAttribute(Qt::WA_DeleteOnClose);
+    browser->show();
 }
 
 void MainWindow::showAbout()
@@ -1477,7 +1490,14 @@ bool MainWindow::checkPermissions()
     QFile::remove(testFile);
 
     // Check if we can write to log file
-    QFile logFile("/tmp/ccb.log");
+#ifdef Q_OS_WIN
+    QString logPath = QDir::toNativeSeparators("C:/ccb.log");
+#elif defined(Q_OS_LINUX)
+    QString logPath = "/var/logs/ccb.log";
+#else
+    QString logPath = "/tmp/ccb.log";
+#endif
+    QFile logFile(logPath);
     if (!logFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
         LOG(QString("MainWindow: Cannot write to log file: %1").arg(logFile.errorString()));
         // This is not critical, just log it
