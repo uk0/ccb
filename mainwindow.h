@@ -104,6 +104,7 @@ private:
     QSpinBox *m_timeoutSpinBox;
     QCheckBox *m_correctionCheckBox;
     QCheckBox *m_localTokenCountCheckBox;
+    QCheckBox *m_debugLogCheckBox;
     QPushButton *m_startStopBtn;
     QListWidget *m_urlList;
     QPushButton *m_addUrlBtn;

@@ -358,7 +358,9 @@ void RequestHandler::sendRequest(PendingRequest &pending)
                 LOG(QString("RequestHandler: tool_calls context: %1").arg(bodyStr.mid(toolCallsPos, 500)));
             }
         }
-        LOG(QString("RequestHandler: FULL request body (first 3000 chars): %1").arg(bodyStr.left(3000)));
+        if (m_config->debugLog()) {
+            LOG(QString("RequestHandler: FULL request body:\n%1").arg(bodyStr));
+        }
         reply = m_networkManager->post(netRequest, requestBody);
     } else if (pending.originalRequest.method == "PUT") {
         reply = m_networkManager->put(netRequest, requestBody);

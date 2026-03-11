@@ -235,9 +235,15 @@ void MainWindow::setupUi()
     m_localTokenCountCheckBox->setChecked(true);
     m_localTokenCountCheckBox->setToolTip("Use fast local token estimation for count_tokens endpoint.\nNo API call needed, works only in OpenAI format mode.");
 
+    // Debug log checkbox
+    m_debugLogCheckBox = new QCheckBox("Debug", this);
+    m_debugLogCheckBox->setChecked(false);
+    m_debugLogCheckBox->setToolTip("Log full request body to log file.\nUseful for debugging, may impact performance.");
+
     row2Layout->addWidget(optionsLabel);
     row2Layout->addWidget(m_correctionCheckBox);
     row2Layout->addWidget(m_localTokenCountCheckBox);
+    row2Layout->addWidget(m_debugLogCheckBox);
     row2Layout->addStretch();
 
     controlPanelLayout->addWidget(row1Widget);
@@ -441,6 +447,7 @@ void MainWindow::loadConfig()
     m_timeoutSpinBox->setValue(m_config->timeoutSeconds());
     m_correctionCheckBox->setChecked(m_config->correctionEnabled());
     m_localTokenCountCheckBox->setChecked(m_config->localTokenCount());
+    m_debugLogCheckBox->setChecked(m_config->debugLog());
     refreshGroupList();
     refreshUrlList();
     refreshKeyList();
@@ -455,6 +462,7 @@ void MainWindow::saveConfig()
     m_config->setTimeoutSeconds(m_timeoutSpinBox->value());
     m_config->setCorrectionEnabled(m_correctionCheckBox->isChecked());
     m_config->setLocalTokenCount(m_localTokenCountCheckBox->isChecked());
+    m_config->setDebugLog(m_debugLogCheckBox->isChecked());
     m_config->save(m_pool);
 }
 

@@ -68,6 +68,7 @@ bool ConfigManager::load(BackendPool *pool)
     m_timeoutSeconds = root.value("timeoutSeconds").toInt(300);
     m_correctionEnabled = root.value("correctionEnabled").toBool(true);
     m_localTokenCount = root.value("localTokenCount").toBool(true);
+    m_debugLog = root.value("debugLog").toBool(false);
 
     // Clear existing groups (except the default one)
     while (pool->getGroupCount() > 1) {
@@ -212,6 +213,7 @@ bool ConfigManager::save(const BackendPool *pool)
     root["timeoutSeconds"] = m_timeoutSeconds;
     root["correctionEnabled"] = m_correctionEnabled;
     root["localTokenCount"] = m_localTokenCount;
+    root["debugLog"] = m_debugLog;
     root["currentGroupIndex"] = pool->getCurrentGroupIndex();
 
     // Save groups
@@ -333,4 +335,14 @@ bool ConfigManager::localTokenCount() const
 void ConfigManager::setLocalTokenCount(bool enabled)
 {
     m_localTokenCount = enabled;
+}
+
+bool ConfigManager::debugLog() const
+{
+    return m_debugLog;
+}
+
+void ConfigManager::setDebugLog(bool enabled)
+{
+    m_debugLog = enabled;
 }

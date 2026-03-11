@@ -37,6 +37,9 @@ public:
     bool localTokenCount() const;
     void setLocalTokenCount(bool enabled);
 
+    bool debugLog() const;
+    void setDebugLog(bool enabled);
+
 signals:
     void logMessage(const QString &message);
 
@@ -48,6 +51,7 @@ private:
     int m_timeoutSeconds = 300;  // Default 5 minutes for Claude Code
     bool m_correctionEnabled = true;  // Default enabled for empty 200 response correction
     bool m_localTokenCount = true;  // Default enabled for fast local token estimation
+    bool m_debugLog = false;  // Default disabled for full request body logging
 };
 
 #endif // CONFIGMANAGER_H
