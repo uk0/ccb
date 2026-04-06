@@ -8,6 +8,8 @@
 #include "logger.h"
 #include "macosstylemanager.h"
 #include "conversationbrowser.h"
+#include "claudesettingsmanager.h"
+#include "claudesettingsdialog.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -41,6 +43,7 @@ MainWindow::MainWindow(LicenseManager *licenseManager, QWidget *parent)
     , m_pool(new BackendPool(this))
     , m_config(new ConfigManager(this))
     , m_server(nullptr)
+    , m_claudeSettings(new ClaudeSettingsManager(this))
     , m_cooldownTimer(new QTimer(this))
     , m_logFlushTimer(new QTimer(this))
     , m_listRefreshTimer(new QTimer(this))
@@ -82,6 +85,8 @@ MainWindow::MainWindow(LicenseManager *licenseManager, QWidget *parent)
     connect(m_pool, &BackendPool::keySwitched, this, &MainWindow::onKeySwitched);
     connect(m_pool, &BackendPool::groupSwitched, this, &MainWindow::onGroupSwitched);
     connect(m_config, &ConfigManager::logMessage, this, &MainWindow::onLogMessage);
+    connect(m_claudeSettings, &ClaudeSettingsManager::logMessage, this, &MainWindow::onLogMessage);
+    connect(m_claudeSettings, &ClaudeSettingsManager::settingsChanged, this, &MainWindow::detectClaudeMode);
     connect(m_server, &ProxyServer::logMessage, this, &MainWindow::onLogMessage);
     connect(m_server, &ProxyServer::started, this, &MainWindow::onServerStarted);
     connect(m_server, &ProxyServer::stopped, this, &MainWindow::onServerStopped);
@@ -109,6 +114,7 @@ MainWindow::MainWindow(LicenseManager *licenseManager, QWidget *parent)
     });
 
     updateStatus();
+    detectClaudeMode();
     LOG("MainWindow: Constructor completed");
 }
 
@@ -303,6 +309,11 @@ void MainWindow::setupUi()
         .arg(style.secondaryTextColor().name()));
     m_currentKeyLabel->setToolTip("Currently active API key");
 
+    // Claude mode label - API vs Subscription
+    m_claudeModeLabel = new QLabel("", this);
+    m_claudeModeLabel->setStyleSheet(QString("font-size: 10px; padding: 1px 6px; border-radius: 3px;"));
+    m_claudeModeLabel->setToolTip("Claude Code mode detected from ~/.claude/settings.json\nAPI = has ANTHROPIC_BASE_URL\nSubscription = no base URL configured");
+
     // Stats label - show connections, requests, corrections
     m_statsLabel = new QLabel("", this);
     m_statsLabel->setStyleSheet(QString("color: %1; font-size: 11px;")
@@ -311,6 +322,7 @@ void MainWindow::setupUi()
 
     infoLayout->addWidget(m_currentUrlLabel);
     infoLayout->addWidget(m_currentKeyLabel);
+    infoLayout->addWidget(m_claudeModeLabel);
     infoLayout->addStretch();
     infoLayout->addWidget(m_statsLabel);
 
@@ -1178,6 +1190,7 @@ void MainWindow::onServerStarted(quint16 port)
     m_timeoutSpinBox->setEnabled(false);
     m_correctionCheckBox->setEnabled(false);
     m_localTokenCountCheckBox->setEnabled(false);
+
     m_statusLabel->setText(QString(":%1").arg(port));
     m_statusLabel->setStyleSheet(QString("font-size: 11px; color: %1;")
         .arg(style.successColor().name()));
@@ -1280,6 +1293,10 @@ void MainWindow::setupMenuBar()
     conversationsAction->setShortcut(QKeySequence("Ctrl+Shift+C"));
     connect(conversationsAction, &QAction::triggered, this, &MainWindow::showConversations);
 
+    QAction *claudeSettingsAction = toolsMenu->addAction("Claude Code Settings");
+    claudeSettingsAction->setShortcut(QKeySequence("Ctrl+Shift+S"));
+    connect(claudeSettingsAction, &QAction::triggered, this, &MainWindow::showClaudeSettings);
+
     QMenu *helpMenu = menuBar->addMenu("Help");
     QAction *aboutAction = helpMenu->addAction("About");
     connect(aboutAction, &QAction::triggered, this, &MainWindow::showAbout);
@@ -1290,6 +1307,58 @@ void MainWindow::showConversations()
     ConversationBrowser *browser = new ConversationBrowser(this);
     browser->setAttribute(Qt::WA_DeleteOnClose);
     browser->show();
+}
+
+void MainWindow::showClaudeSettings()
+{
+    ClaudeSettingsDialog dialog(m_claudeSettings, this);
+    bool running = m_server && m_server->isRunning();
+    dialog.setProxyInfo(m_portSpinBox->value(), running);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        detectClaudeMode();
+        appendLog("Claude Code settings updated");
+    }
+}
+
+void MainWindow::detectClaudeMode()
+{
+    auto &style = MacOSStyleManager::instance();
+
+    // Read-only: only load from file, never write
+    m_claudeSettings->load();
+
+    if (!m_claudeSettings->settingsFileExists()) {
+        m_claudeModeLabel->setText("No Settings");
+        m_claudeModeLabel->setStyleSheet(QString(
+            "font-size: 10px; padding: 1px 6px; border-radius: 3px; "
+            "background-color: %1; color: %2;"
+        ).arg(style.tertiaryBackgroundColor().name(), style.secondaryTextColor().name()));
+        m_claudeModeLabel->setToolTip("~/.claude/settings.json not found");
+        return;
+    }
+
+    bool apiMode = m_claudeSettings->isApiMode();
+    if (apiMode) {
+        QString baseUrl = m_claudeSettings->envVar("ANTHROPIC_BASE_URL");
+        m_claudeModeLabel->setText("API");
+        m_claudeModeLabel->setStyleSheet(QString(
+            "font-size: 10px; padding: 1px 6px; border-radius: 3px; "
+            "background-color: rgba(33, 150, 243, 0.2); color: %1;"
+        ).arg(style.accentColor().name()));
+        m_claudeModeLabel->setToolTip(
+            QString("API Mode - ANTHROPIC_BASE_URL: %1\nTools → Claude Code Settings to modify")
+                .arg(baseUrl.isEmpty() ? "(token only)" : baseUrl));
+    } else {
+        m_claudeModeLabel->setText("Subscription");
+        m_claudeModeLabel->setStyleSheet(QString(
+            "font-size: 10px; padding: 1px 6px; border-radius: 3px; "
+            "background-color: rgba(76, 175, 80, 0.2); color: %1;"
+        ).arg(style.successColor().name()));
+        m_claudeModeLabel->setToolTip(
+            "Subscription Mode - No ANTHROPIC_BASE_URL\n"
+            "Tools → Claude Code Settings to modify");
+    }
 }
 
 void MainWindow::showAbout()

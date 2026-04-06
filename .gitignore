@@ -1,4 +1,43 @@
-build
-.idea
+# Build
+build/
+*.o
+*.obj
+*.exe
+*.app
+*.dmg
+
+# IDE
+.idea/
+.qtcreator/
+*.user
+CMakeUserPresets.json
+
+# macOS
 .DS_Store
+._*
+
+# Tools & License (contains secrets)
+tools/
+win.license.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment & secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Docs (generated)
 docs/
+
+# User data & sessions
+userdata/
+*.session
+*.log
+
+# Proxy config (may contain API keys)
+config.json

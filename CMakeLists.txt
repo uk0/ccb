@@ -86,6 +86,10 @@ set(PROJECT_SOURCES
         conversationbrowser.cpp
         macosstylemanager.h
         macosstylemanager.cpp
+        claudesettingsmanager.h
+        claudesettingsmanager.cpp
+        claudesettingsdialog.h
+        claudesettingsdialog.cpp
         # Conversion module - Claude/OpenAI format conversion
         conversion/constants.h
         conversion/types.h

@@ -108,26 +108,36 @@ make -j4
 
 ```
 ccb/
-├── main.cpp                 # 入口，License 检查
-├── mainwindow.cpp/h         # 主窗口 UI
-├── mainwindow.ui            # Qt Designer UI 文件
-├── backendpool.cpp/h        # 后端 URL/Key 池管理
-├── configmanager.cpp/h      # 配置管理
-├── requesthandler.cpp/h     # HTTP 请求处理
-├── proxyserver.cpp/h        # 代理服务器
-├── logger.cpp/h             # 日志系统
-├── licensemanager.cpp/h     # License 验证
-├── licensedialog.cpp/h      # License 激活对话框
-├── resources.qrc            # 资源文件
-├── CMakeLists.txt           # CMake 构建配置
-├── Info.plist.in            # macOS 应用信息
-├── ccb.entitlements         # macOS 权限配置
-├── AppIcon.icns             # 应用图标
-├── build.sh                 # macOS 自动化构建脚本
-├── build.bat                # Windows 自动化构建脚本
-├── CLAUDE.md                # 项目文档
-└── tools/
-    └── generate_license.py  # License 生成脚本
+├── main.cpp                      # 入口，License 检查
+├── mainwindow.cpp/h              # 主窗口 UI
+├── mainwindow.ui                 # Qt Designer UI 文件
+├── backendpool.cpp/h             # 后端 URL/Key 池管理
+├── configmanager.cpp/h           # 配置管理 (config.json)
+├── claudesettingsmanager.cpp/h   # Claude Code settings.json 读写
+├── claudesettingsdialog.cpp/h    # Claude Code 设置对话框 UI
+├── requesthandler.cpp/h          # HTTP 请求处理
+├── proxyserver.cpp/h             # 代理服务器
+├── logger.cpp/h                  # 日志系统
+├── licensemanager.cpp/h          # License 验证
+├── licensedialog.cpp/h           # License 激活对话框
+├── conversationbrowser.cpp/h     # 对话浏览器
+├── macosstylemanager.cpp/h       # macOS 主题管理 (Dark/Light)
+├── conversion/                   # API 格式转换模块
+│   ├── constants.h               # 常量定义
+│   ├── types.h                   # 流式状态类型
+│   ├── request_converter.cpp/h   # Claude → OpenAI 请求转换
+│   ├── response_converter.cpp/h  # OpenAI → Claude 响应转换
+│   └── streaming_converter.cpp/h # SSE 流式转换
+├── resources.qrc                 # 资源文件
+├── CMakeLists.txt                # CMake 构建配置
+├── Info.plist.in                 # macOS 应用信息
+├── ccb.entitlements              # macOS 权限配置
+├── AppIcon.icns                  # 应用图标
+├── build.sh                      # macOS 自动化构建脚本
+├── build.bat                     # Windows 自动化构建脚本
+├── CLAUDE.md                     # 开发文档
+└── tools/                        # License 工具 (not tracked)
+    └── generate_license.py       # License 生成脚本
 ```
 
 ## 配置选项
@@ -164,7 +174,7 @@ ccb/
 
 1. **机器码生成**: SHA256(MAC地址 + 主机名 + machineUniqueId + 盐值)
    - 使用 `QSysInfo::machineUniqueId()` 确保跨系统版本稳定
-   - 盐值: `CCB_SALT_UK0_2024_V2`
+   - 盐值定义在源码中，请勿公开
 2. **License 结构**: `机器码哈希(8字节) + 过期日期(4字节) + 签名(4字节)`
 3. **编码方式**: 自定义 Base32（32字符: `ABCDEFGHJKMNPQRSTUVWXYZ23456789W`）
 
@@ -177,10 +187,7 @@ python generate_license.py "机器码" "2025-12-31"
 
 ### 密钥配置（licensemanager.cpp）
 
-```cpp
-const QByteArray LicenseManager::SECRET_KEY = "CCB_LICENSE_KEY_2024_FIRSH_ME";
-const QByteArray LicenseManager::STORAGE_KEY = "CCB_STORAGE_ENC_KEY_UK0";
-```
+密钥定义在 `licensemanager.cpp` 中，请勿提交到公开仓库。
 
 ## macOS 部署配置
 
@@ -317,10 +324,25 @@ project(ccb VERSION 1.0 LANGUAGES CXX)
 
 ## 版本历史
 
+### v1.1 (开发中)
+- Claude Code Settings Manager (读写 ~/.claude/settings.json)
+  - 环境变量 Checkbox 开关 (10 项功能开关)
+  - API 连接参数编辑 (Base URL, Auth Token, Timeout 等)
+  - 自定义环境变量管理
+  - Settings 配置 (Model, Fast Mode, Agent Teams, Permissions)
+  - API / Subscription 模式自动检测
+  - 只读检测，手动保存才写入文件
+- 对话浏览器 (Conversation Browser)
+- Dark/Light 主题自动切换
+- OpenAI API 格式转换 (Claude ↔ OpenAI)
+- 流式响应转换 (SSE)
+- Model Mapping 模型名映射
+- Debug 日志开关
+
 ### v1.0
 - 基础代理功能
-- 多 URL/Key 支持
-- 自动故障转移
+- 多 URL/Key 支持 + Group 分组
+- 自动故障转移 + Cooldown 恢复
 - 离线 License 系统
 - 可配置超时时间 (30-600秒)
 - 空响应纠错 (Correction) 功能

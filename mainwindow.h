@@ -18,6 +18,7 @@ class ConversationBrowser;
 class ConfigManager;
 class ProxyServer;
 class LicenseManager;
+class ClaudeSettingsManager;
 
 // Forward declare ProxyServer::Stats
 #include "proxyserver.h"
@@ -59,6 +60,7 @@ private slots:
     void updateStatus();
     void showAbout();
     void showConversations();
+    void showClaudeSettings();
     void flushLogBuffer();
     void onStatsUpdated(const ProxyServer::Stats &stats);
     void onUrlItemClicked(QListWidgetItem *item);
@@ -80,6 +82,7 @@ private:
     bool showStyledConfirm(const QString &title, const QString &message, const QString &detail = QString());
     void showEditGroupDialog();
     void showSupportedPlatformsDialog(QWidget *parent);
+    void detectClaudeMode();
 
     Ui::MainWindow *ui;
 
@@ -87,6 +90,7 @@ private:
     BackendPool *m_pool;
     ConfigManager *m_config;
     ProxyServer *m_server;
+    ClaudeSettingsManager *m_claudeSettings;
     QTimer *m_cooldownTimer;
     QTimer *m_logFlushTimer;
     QTimer *m_listRefreshTimer;
@@ -121,6 +125,7 @@ private:
     QPushButton *m_addGroupBtn;
     QPushButton *m_removeGroupBtn;
     QPushButton *m_editGroupBtn;
+    QLabel *m_claudeModeLabel;
 };
 
 #endif // MAINWINDOW_H
